@@ -30,7 +30,7 @@
         font-family: sans-serif;
         font-size: 1.2em;
         line-height: 1;
-        background: #333 radial-gradient(#600, #100) no-repeat fixed;
+        background-color: #100;
         color: #fff;
         text-align: center;
         -webkit-text-size-adjust: 100%;
@@ -40,6 +40,20 @@
       body {
         margin: 0;
         overflow-x: hidden;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        background: #333 radial-gradient(#600, #100) no-repeat;
+        pointer-events: none;
+        transform: translateZ(0);
+        will-change: transform;
+      }
+      .disable-hover,
+      .disable-hover * {
+        pointer-events: none !important;
       }
       header {
         display: flex;
@@ -61,6 +75,8 @@
       }
       section {
         margin: 0.5em;
+        content-visibility: auto;
+        contain-intrinsic-size: 1px 400px;
       }
       .app {
         position: relative;
@@ -113,6 +129,7 @@
         background-image: linear-gradient(-45deg, rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0));
         cursor: pointer;
         transition: all 0.1s;
+        contain: layout paint;
         /* box-shadow: 1px 1px 5px #000; */
       }
       .slot:hover,
@@ -123,6 +140,7 @@
         background-image: linear-gradient(-45deg, rgba(0, 0, 0, 0.3), rgba(255, 255, 255, 0.3));
         z-index: 2;
         box-shadow: 0 2px 3px #0006;
+        will-change: transform;
       }
       .dlc1 {
         background-color: #779;
@@ -620,9 +638,9 @@
       </div>
     </div>
 
-    <a class="github" href="https://github.com/Danmer/vs-build-planner" target="_blank"><img loading="lazy" width="149" height="149" src="./img/github.webp" alt="Fork me on GitHub" /></a>
+    <a class="github" href="https://github.com/i14d14/vs-build-planner" target="_blank"><img loading="lazy" width="149" height="149" src="./img/github.webp" alt="Fork me on GitHub" /></a>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.6/vue.global.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.6/vue.global.prod.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
     <script src="./data.js"></script>
     <script>
@@ -730,6 +748,7 @@
             item.items = item.itemIds ? item.itemIds.map((itemId) => itemsById[itemId]).filter((it) => !(it.type === 'passive' && item.type === 'passive')) : []
             item.evolution = item.evolutionId && itemsById[item.evolutionId]
             item.title = (item.fullName || item.name) + (item.type === 'weapon' || item.type === 'passive' ? ` (Rarity: ${item.rarity || 'Unknown'})` : '') + (item.price ? ` (Price: ${item.price})` : '') + (item.description ? `\n${item.description}` : '')
+            item.relatedEvolutionIds = evolutions.filter((evo) => evo.itemIds.includes(item.id)).map((evo) => evo.id)
           }
 
           const impactsById = computed(() => {
@@ -1109,8 +1128,10 @@
             }
 
             // sort impacts (selected - down, others - up)
-            for (const itemId in newImpactsById) {
-              newImpactsById[itemId].sort((id1, id2) => (itemsById[id1.substring(1)]?.selected ? 1 : -1))
+            if (config.impacts) {
+              for (const itemId in newImpactsById) {
+                newImpactsById[itemId].sort((id1, id2) => (itemsById[id1.substring(1)]?.selected ? 1 : -1))
+              }
             }
 
             return newImpactsById
@@ -1265,23 +1286,22 @@
           watch(
             selectedIds,
             () => {
-              const idsArray = Array.from(selectedIds)
-              for (const item of items) {
-                // selected if it's manually selected or it's a stage's item
-                item.selected = idsArray.includes(item.id) || (selectedStage.value.itemIds.includes(item.id) && item.type === 'passive')
-                // protected from deleting if it's a character's item
+              const stageItemIds = new Set(selectedStage.value.itemIds)
+              for (let i = 0; i < items.length; i++) {
+                const item = items[i]
+                item.selected = selectedIds.has(item.id) || (item.type === 'passive' && stageItemIds.has(item.id))
                 item.fixed = isItemFixed(item)
               }
-              for (const evolution of evolutions) {
-                // selected if all required items are selected or if it's a character's item
-                evolution.selected = evolution.items.every((item) => item.selected) || selectedCharacter.value.itemIds.includes(evolution.id)
+              for (let i = 0; i < evolutions.length; i++) {
+                const evolution = evolutions[i]
+                evolution.selected = evolution.items.every((it) => it.selected) || selectedCharacter.value.itemIds.includes(evolution.id)
               }
-              for (const weapon of weapons) {
-                // evolved if all required items are selected
+              for (let i = 0; i < weapons.length; i++) {
+                const weapon = weapons[i]
                 weapon.evolved = weapon.evolutionId && weapon.evolution.items.every((it) => it.selected) && !selectedCharacter.value.itemIds.includes(weapon.evolutionId) && !selectedCharacter.value.itemIds.includes(weapon.evolution?.evolutionId)
               }
-              for (const evolution of evolutions) {
-                // evolved if all required items are selected or evolved
+              for (let i = 0; i < evolutions.length; i++) {
+                const evolution = evolutions[i]
                 evolution.evolved = evolution.evolutionId && (evolution.evolution.items.every((it) => it.selected) || selectedCharacter.value.itemIds.includes(evolution.evolutionId))
               }
               updateHash()
@@ -1321,26 +1341,47 @@
 
           watchEffect(() => {
             if (config.sorting) {
-              weapons.sort((a, b) => {
-                const selected1 = impactsById.value[a.id].filter((i) => selectedIds.has(i.substring(1)))
-                const selected2 = impactsById.value[b.id].filter((i) => selectedIds.has(i.substring(1)))
-                return selected2.length - selected1.length || b.index - a.index
-              })
-              evolutions.sort((a, b) => {
-                const selected1 = impactsById.value[a.id].filter((i) => selectedIds.has(i.substring(1)))
-                const selected2 = impactsById.value[b.id].filter((i) => selectedIds.has(i.substring(1)))
-                return selected2.length - selected1.length || b.index - a.index
-              })
+              const impacts = impactsById.value
+
+              function getMatchCount(id) {
+                const list = impacts[id]
+                if (!list) return 0
+                let count = 0
+                for (let i = 0; i < list.length; i++) {
+                  if (selectedIds.has(list[i].substring(1))) {
+                    count++
+                  }
+                }
+                return count
+              }
+
+              const weaponScores = new Map()
+              for (let i = 0; i < weapons.length; i++) {
+                weaponScores.set(weapons[i].id, getMatchCount(weapons[i].id))
+              }
+              weapons.sort((a, b) => (weaponScores.get(b.id) - weaponScores.get(a.id)) || (b.index - a.index))
+
+              const evoScores = new Map()
+              for (let i = 0; i < evolutions.length; i++) {
+                evoScores.set(evolutions[i].id, getMatchCount(evolutions[i].id))
+              }
+              evolutions.sort((a, b) => (evoScores.get(b.id) - evoScores.get(a.id)) || (b.index - a.index))
+
+              const passiveScores = new Map()
+              for (let i = 0; i < passives.length; i++) {
+                passiveScores.set(passives[i].id, getMatchCount(passives[i].id))
+              }
               passives.sort((a, b) => {
-                const selected1 = impactsById.value[a.id].filter((i) => selectedIds.has(i.substring(1)))
-                const selected2 = impactsById.value[b.id].filter((i) => selectedIds.has(i.substring(1)))
-                return a.dlc3 && !b.dlc3 ? 1 : !a.dlc3 && b.dlc3 ? -1 : selected2.length - selected1.length || b.index - a.index
+                if (a.dlc3 && !b.dlc3) return 1
+                if (!a.dlc3 && b.dlc3) return -1
+                return (passiveScores.get(b.id) - passiveScores.get(a.id)) || (b.index - a.index)
               })
-              arcanas.sort((a, b) => {
-                const selected1 = impactsById.value[a.id].filter((i) => selectedIds.has(i.substring(1)))
-                const selected2 = impactsById.value[b.id].filter((i) => selectedIds.has(i.substring(1)))
-                return selected2.length - selected1.length || b.index - a.index
-              })
+
+              const arcanaScores = new Map()
+              for (let i = 0; i < arcanas.length; i++) {
+                arcanaScores.set(arcanas[i].id, getMatchCount(arcanas[i].id))
+              }
+              arcanas.sort((a, b) => (arcanaScores.get(b.id) - arcanaScores.get(a.id)) || (b.index - a.index))
             }
           })
 
@@ -1370,10 +1411,35 @@
               .filter((id) => id)
               .join()
             if ('#' + newHash !== location.hash) {
-              const scrollPosition = document.documentElement.scrollTop
-              location.hash = newHash
-              document.documentElement.scrollTop = scrollPosition
+              history.replaceState(null, '', '#' + newHash)
             }
+          }
+
+          let highlightedElements = []
+          const elementsByIdCache = new Map()
+
+          let scrollTimeout
+          window.addEventListener(
+            'scroll',
+            () => {
+              if (!document.body.classList.contains('disable-hover')) {
+                document.body.classList.add('disable-hover')
+              }
+              clearTimeout(scrollTimeout)
+              scrollTimeout = setTimeout(() => {
+                document.body.classList.remove('disable-hover')
+              }, 80)
+            },
+            { passive: true }
+          )
+
+          function getElementsById(id) {
+            let elements = elementsByIdCache.get(id)
+            if (!elements || elements.length === 0 || !elements[0].isConnected) {
+              elements = Array.from(document.querySelectorAll(`[data-id="${id}"]`))
+              elementsByIdCache.set(id, elements)
+            }
+            return elements
           }
 
           function showImpacts(object) {
@@ -1381,26 +1447,36 @@
               return false
             }
             if (object.type !== 'arcana' && object.itemIds) {
-              const evolutionIds = evolutions.filter((evolution) => evolution.itemIds.includes(object.id)).map((evolution) => evolution.id)
-              for (const itemId of object.itemIds.concat(evolutionIds)) {
-                document.querySelectorAll(`[data-id="${itemId}"]`).forEach((element) => {
-                  element.classList.add('yellow')
-                })
+              const targetIds = object.itemIds.concat(object.relatedEvolutionIds || [])
+              for (let i = 0; i < targetIds.length; i++) {
+                const elements = getElementsById(targetIds[i])
+                for (let j = 0; j < elements.length; j++) {
+                  elements[j].classList.add('yellow')
+                  highlightedElements.push(elements[j])
+                }
               }
             }
-            if (impactsById.value[object.id]) {
-              for (const impact of impactsById.value[object.id]) {
-                document.querySelectorAll(`[data-id="${impact.substring(1)}"]`).forEach((element) => {
-                  element.classList.add(impact[0] === '+' ? 'green' : impact[0] === '-' ? 'red' : impact[0] === '~' ? 'greenred' : impact[0] === '!' ? 'redgreen' : 0)
-                })
+            const impacts = impactsById.value[object.id]
+            if (impacts) {
+              for (let i = 0; i < impacts.length; i++) {
+                const impact = impacts[i]
+                const cls = impact[0] === '+' ? 'green' : impact[0] === '-' ? 'red' : impact[0] === '~' ? 'greenred' : impact[0] === '!' ? 'redgreen' : null
+                if (cls) {
+                  const elements = getElementsById(impact.substring(1))
+                  for (let j = 0; j < elements.length; j++) {
+                    elements[j].classList.add(cls)
+                    highlightedElements.push(elements[j])
+                  }
+                }
               }
             }
           }
 
           function hideImpacts() {
-            document.querySelectorAll(`.yellow, .green, .red, .greenred, .redgreen`).forEach((element) => {
-              element.classList.remove('yellow', 'green', 'red', 'greenred', 'redgreen')
-            })
+            for (let i = 0; i < highlightedElements.length; i++) {
+              highlightedElements[i].classList.remove('yellow', 'green', 'red', 'greenred', 'redgreen')
+            }
+            highlightedElements.length = 0
           }
 
           function onMouseEnter(object) {
@@ -1411,7 +1487,7 @@
           function onMouseLeave(object) {
             hoveredId = ''
             if (object && object.type === 'character') {
-              const iconElements = document.querySelectorAll(`[data-id="${object.id}"] > .icon`)
+              const iconElements = getElementsById(object.id).map(el => el.querySelector('.icon')).filter(Boolean)
               for (const iconElement of iconElements) {
                 iconElement.style.backgroundImage = ''
               }
@@ -1664,22 +1740,5 @@
       }).mount('#app')
     </script>
 
-    <!-- Yandex.Metrika counter -->
-    <script type="text/javascript">
-      ;(function (m, e, t, r, i, k, a) {
-        m[i] =
-          m[i] ||
-          function () {
-            ;(m[i].a = m[i].a || []).push(arguments)
-          }
-        m[i].l = 1 * new Date()
-        ;(k = e.createElement(t)), (a = e.getElementsByTagName(t)[0]), (k.async = 1), (k.src = r), a.parentNode.insertBefore(k, a)
-      })(window, document, 'script', 'https://mc.yandex.ru/metrika/tag.js', 'ym')
-      ym(88260279, 'init', { clickmap: true, trackLinks: true, accurateTrackBounce: true, webvisor: true, trackHash: true })
-    </script>
-    <noscript>
-      <div><img src="https://mc.yandex.ru/watch/88260279" style="position: absolute; left: -9999px" alt="" /></div>
-    </noscript>
-    <!-- /Yandex.Metrika counter -->
   </body>
 </html>
